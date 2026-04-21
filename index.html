@@ -14,7 +14,6 @@
 <body>
 
 <div class="container">
-    <h2>UT FieldLab Seismic Feed</h2>
     <div id="uplot-container"></div>
 </div>
 
@@ -32,7 +31,6 @@
     const SAMPLERATE = 250;
     const WINDOW_SECONDS = 10;
     const SAMPLES_IN_WINDOW = WINDOW_SECONDS*SAMPLERATE;
-    console.log(SAMPLES_IN_WINDOW)
     const STREAM_DELAY = 5; // Seconds
 
     // uPlot data structure: [ [timestamps], [series1_values], [series2_values], ... ]
@@ -47,10 +45,12 @@
     
     const container = document.getElementById("uplot-container");
 
+    let plotHeight = Math.max(300, window.innerHeight - 100)
+
     // 1. Initial uPlot Config
     const opts = {
         width: container.offsetWidth - 20,
-        height: 500,
+        height: plotHeight,
         cursor: { show: false }, // Disable cursor for max performance
         scales: {
             x: { time: true },
@@ -71,7 +71,8 @@
 
     // 2. Handle Resize
     window.addEventListener("resize", () => {
-        uplot.setSize({ width: container.offsetWidth - 20, height: 500 });
+        plotHeight = Math.max(300, window.innerHeight - 100);
+        uplot.setSize({ width: container.offsetWidth - 20, height: plotHeight});
     });
 
 
@@ -84,7 +85,7 @@
         samplesToUpdate = Math.round((newLastSampleTime - lastSampleTime)*SAMPLERATE)
         
         if (samplesToUpdate >= SAMPLES_IN_WINDOW) console.error("Too many samples in one frame to update");
-        if (samplesToUpdate >= 10) console.log(`Had to update ${samplesToUpdate} samples, ${lastSampleTime} to ${newLastSampleTime}`)
+        if (samplesToUpdate >= 100) console.log(`Had to update ${samplesToUpdate} samples, ${lastSampleTime} to ${newLastSampleTime}`)
 
         for (let i=0; i < samplesToUpdate; i++){
             chartData[0].shift()
@@ -110,10 +111,9 @@
             if (!data.id || data.id.slice(-3) !== "HHN") return;
             const stationId = data.id.split('.').slice(0, 2).join('.');
             const stationIdx = statToIdx.get(stationId);
-            console.log(data)
             const interval = (data.data.length > 1) ? (data.end - data.start) / (data.data.length) : 0;
             if (data.sampleRate !== SAMPLERATE) console.error(`Unsupported samplerate ${data.sampleRate}!`);
-            if (interval !== 1000/data.samplerate) console.log(`Weird interval: ${interval}`);
+            if (interval - 1000/data.samplerate > Number.EPSILON) console.log(`Weird interval: ${interval}`);
             startIdx = (data.start / 1000 - lastSampleTime) * SAMPLERATE;
             dataBuffer[stationIdx].splice(startIdx, data.data.length, ...data.data)
         };
