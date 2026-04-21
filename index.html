@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UT FieldLab Seismometers</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
+    <style>
+        body { font-family: -apple-system, system-ui, "Segoe UI", Roboto, Helvetica; background: #121212; color: #e0e0e0; margin: 20px; }
+        .container { max-width: 1100px; margin: auto; }
+        #uplot-container { width: 100%; background: #1a1a1a; padding: 10px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>UT FieldLab Seismic Feed</h2>
+    <div id="uplot-container"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+<script>
+    const STATIONS = [
+        { id: "NL.LISA1", color: "#ff6384", label: "LISA 1" },
+        { id: "NL.LISA2", color: "#36a2eb", label: "LISA 2" },
+        { id: "NL.LISA3", color: "#4bc0c0", label: "LISA 3" },
+        { id: "NL.LISA4", color: "#ffce56", label: "LISA 4" }
+    ];
+    const statToIdx = new Map(STATIONS.map((st, index) => [st.id, index]));
+    const dataBuffer = Array.from({ length: STATIONS.length}, () => []);
+    
+    const SAMPLERATE = 250;
+    const WINDOW_SECONDS = 10;
+    const SAMPLES_IN_WINDOW = WINDOW_SECONDS*SAMPLERATE;
+    console.log(SAMPLES_IN_WINDOW)
+    const STREAM_DELAY = 5; // Seconds
+
+    // uPlot data structure: [ [timestamps], [series1_values], [series2_values], ... ]
+    let renderTime = Date.now() / 1000 - STREAM_DELAY;
+    let lastSampleTime = Math.floor(renderTime*SAMPLERATE) / SAMPLERATE
+    let chartData = [Array.from({ length: SAMPLES_IN_WINDOW }, (_, i) => lastSampleTime - WINDOW_SECONDS + (i * 1/SAMPLERATE)), 
+                     ...Array.from({ length: STATIONS.length}, () => Array(SAMPLES_IN_WINDOW).fill(null))];
+    
+    
+    let uplot;
+    let socket;
+    
+    const container = document.getElementById("uplot-container");
+
+    // 1. Initial uPlot Config
+    const opts = {
+        width: container.offsetWidth - 20,
+        height: 500,
+        cursor: { show: false }, // Disable cursor for max performance
+        scales: {
+            x: { time: true },
+            y: { range: (u, min, max) => [min - 100, max + 100] } // Auto-scale with padding
+        },
+        series: [
+            {}, // Time series (x-axis)
+            ...STATIONS.map(st => {return {label: st.label, stroke: st.color,}})
+        ],
+        axes: [
+            { stroke: "#888", grid: { stroke: "#333" } },
+            { stroke: "#888", grid: { stroke: "#333" } }
+        ]
+    };
+    
+
+    uplot = new uPlot(opts, chartData, container);
+
+    // 2. Handle Resize
+    window.addEventListener("resize", () => {
+        uplot.setSize({ width: container.offsetWidth - 20, height: 500 });
+    });
+
+
+
+    // 4. Animation Loop (Smooth Scrolling)
+    function update() {
+        renderTime = Date.now() / 1000 - STREAM_DELAY;
+        const newLastSampleTime = Math.floor(renderTime*SAMPLERATE) / SAMPLERATE
+        
+        samplesToUpdate = Math.round((newLastSampleTime - lastSampleTime)*SAMPLERATE)
+        
+        if (samplesToUpdate >= SAMPLES_IN_WINDOW) console.error("Too many samples in one frame to update");
+        if (samplesToUpdate >= 10) console.log(`Had to update ${samplesToUpdate} samples, ${lastSampleTime} to ${newLastSampleTime}`)
+
+        for (let i=0; i < samplesToUpdate; i++){
+            chartData[0].shift()
+            chartData[0].push(lastSampleTime + i/SAMPLERATE)
+            for (let j=1; j <= STATIONS.length; j++){
+                chartData[j].shift()
+                chartData[j].push(dataBuffer[j-1].length > 1 ? dataBuffer[j-1].shift() : null)
+            }
+        }
+        
+        
+        lastSampleTime = newLastSampleTime
+        uplot.setData(chartData);
+        
+        requestAnimationFrame(update);
+    }
+
+    // 5. WebSocket
+    function startWebsocket() {
+        socket = new WebSocket("https://www.orfeus-eu.org/websocket/");
+        socket.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            if (!data.id || data.id.slice(-3) !== "HHN") return;
+            const stationId = data.id.split('.').slice(0, 2).join('.');
+            const stationIdx = statToIdx.get(stationId);
+            console.log(data)
+            const interval = (data.data.length > 1) ? (data.end - data.start) / (data.data.length) : 0;
+            if (data.sampleRate !== SAMPLERATE) console.error(`Unsupported samplerate ${data.sampleRate}!`);
+            if (interval !== 1000/data.samplerate) console.log(`Weird interval: ${interval}`);
+            startIdx = (data.start / 1000 - lastSampleTime) * SAMPLERATE;
+            dataBuffer[stationIdx].splice(startIdx, data.data.length, ...data.data)
+        };
+        socket.onopen = (e) => {
+            STATIONS.forEach(st => {
+                socket.send(JSON.stringify({subscribe: st.id}));
+            });
+        }
+        socket.onclose = () => setTimeout(startWebsocket, 2000);
+    }
+
+    startWebsocket();
+    requestAnimationFrame(update);
+</script>
+
+</body>
+</html>
